@@ -3,6 +3,9 @@ extends Node3D
 const rules = preload("res://scripts/flight_rules.gd")
 const visual = preload("res://scripts/visuals.gd")
 const HUD = preload("res://scripts/hud.gd")
+const ShipVisual = preload("res://scripts/ships/ship_visual.gd")
+@export var player_appearance: Resource = preload("res://resources/ships/player_wolfen.tres")
+@export var enemy_appearance: Resource = preload("res://resources/ships/enemy_scout.tres")
 var state := "menu"
 var elapsed := 0.0
 var health := 100.0
@@ -97,7 +100,7 @@ func build_world() -> void:
 	player = Node3D.new()
 	add_child(player)
 	player.position = Vector3(0, 0, 8)
-	ship_model = visual.ship(player)
+	ship_model = ShipVisual.spawn(player, player_appearance)
 	visual.box(scenery, Vector3(0, -10, -300), Vector3(170, 1, 750), Color("112338"))
 	# Recycled architecture gives clear speed cues without an infinite scene tree.
 	for i in range(24):
@@ -231,8 +234,8 @@ func _process(dt: float) -> void:
 	if state == "menu":
 		menu_time += dt
 		player.position = Vector3(8, 3.0 + sin(menu_time) * 0.45, 6)
-		ship_model.scale = Vector3.ONE * 1.8
-		ship_model.rotation = Vector3(-0.1, -0.4 + sin(menu_time * 0.3) * 0.18, -0.24)
+		ship_model.scale = Vector3.ONE * player_appearance.preview_scale
+		ship_model.rotation_degrees = player_appearance.preview_rotation_degrees + Vector3(0, sin(menu_time * 0.3) * 10, 0)
 		move_scenery(dt * 0.16)
 		return
 	if state != "playing":
@@ -333,9 +336,7 @@ func spawn_wave(phase: int) -> void:
 	for i in range(count):
 		var n := Node3D.new()
 		actors.add_child(n)
-		var body := visual.ship(n, true)
-		body.rotation.y = PI
-		body.scale = Vector3.ONE * 0.9
+		ShipVisual.spawn(n, enemy_appearance)
 		var x := clampf(center_x + (i - (count-1) / 2.0) * 5.4, -11, 11)
 		n.position = Vector3(x, center_y + (i % 2) * 1.7, -155 - i * 10)
 		enemies.append({"node": n, "base_x": x, "base_y": n.position.y, "age": 0.0, "phase": float(i), "health": 2 if phase < 3 else 3, "fire": 2.5 + i * 0.7, "speed": 24.0 + phase * 2, "radius": 2.3})

@@ -28,6 +28,18 @@ func run() -> void:
 	game.muted = true
 	game.start_run()
 	Input.use_accumulated_input = false
+	check(game.ship_model.model is Node3D and game.ship_model.appearance == game.player_appearance, "player loads its configured standalone 3D model")
+	var old_player_id: int = game.player.get_instance_id()
+	var old_position: Vector3 = game.player.position
+	game.ship_model.set_appearance(game.enemy_appearance)
+	check(game.ship_model.model.scale == Vector3.ONE * 0.9, "replacement model receives its own presentation scale")
+	check(game.player.get_instance_id() == old_player_id and game.player.position == old_position and game.health == 100 and game.score == 0, "swapping appearance preserves player identity, movement and game state")
+	game.ship_model.set_appearance(game.player_appearance)
+	check(game.ship_model.get_child_count() == 1, "repeated visual swaps leave only one active model")
+	game.spawn_wave(0)
+	var enemy_visual: Node3D = game.enemies[0].node.get_child(0)
+	check(enemy_visual.appearance == game.enemy_appearance and game.ship_model.appearance == game.player_appearance, "enemy and player designs are selected independently")
+	game.clear_actors()
 	var key := InputEventKey.new()
 	key.physical_keycode = KEY_D
 	key.pressed = true
