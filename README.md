@@ -1,0 +1,80 @@
+# VECTOR WING / like3DRailShooting
+
+オリジナルの3Dレールシューティング試作品。Godot 4.6 stable / GDScript / Compatibility renderer。
+ブラウザ版とWindows版で同一のゲームコードを使用します。
+
+## すぐ遊ぶ
+
+この作業フォルダには、ビルド済みの `build/web/` と `build/windows/` を用意しています。
+Gitリポジトリではビルド成果物を管理していないため、別のPCへcloneした場合は下記の出力手順が必要です。
+
+- ブラウザ: `Play-Web.cmd` を実行。ローカルサーバーが立ち上がり、ブラウザを開きます。Python 3が必要です。このPCではCodex同梱Pythonも自動検出します。
+- 起動中のURL: <http://127.0.0.1:8765/>。`index.html` のダブルクリックでは動作しません。
+- サーバーの停止: 起動した端末で Ctrl+C。
+- ポートが使用中の場合: `python tools/serve.py --port 8766 --open`。
+- Windows: `build/windows/VectorWing.exe` を実行。
+
+## 操作
+
+| 操作 | マウス・キーボード | ゲームパッド |
+|---|---|---|
+| 移動 | マウス / WASD / 矢印キー | 左スティック |
+| 射撃 | 左クリック / Space を長押し | A / RT / RB を長押し |
+| 開始・リトライ・再開 | Enter / 画面のボタン | A |
+| 一時停止・再開 | Esc / P / 画面右上の II | Start |
+| 上下反転 | I | キーボードの I で切替 |
+| 効果音ON/OFF | M | キーボードの M で切替 |
+
+マウスを動かすとマウス移動に切り替わり、移動キーやスティックを使うとそちらへ切り替わります。
+ブラウザではゲーム画面をクリックし、ゲームパッドのボタンを一度押して認識させてください。
+ボタン表記はXbox系を基準にしています。機種・OS・ブラウザによる割り当ての違いは実機確認が必要です。
+別ウィンドウへ移ると自動的に一時停止します。
+
+## 試作品の範囲
+
+- 自機の上下左右移動、連射、敵編隊、敵弾、接触ダメージ。
+- 4分の1ステージ、4区間で敵数・出現頻度・攻撃頻度が変化。
+- 破壊できない障害物、回復リング、HP、スコア、命中率。
+- 撃墜、リトライ、クリア、結果画面、一時停止。
+- オリジナルの図形ベースの機体・背景・効果音。
+
+HPが残った状態で04:00に到達すればクリア。敵撃墜100点、補給リング150点、クリア2000点＋残HP×20点です。
+ダメージは敵弾10、敵機接触18、障害物25。被弾後0.85秒は無敵。緑のリングでHPが25回復します。
+
+## 開発
+
+Godot **4.6 stable Standard版**で `project.godot` を開き、F6ではなくF5でプロジェクト全体を実行してください。
+Godot 4.6に対応するExport Templatesをインストールすれば、同梱プリセットから出力できます。
+初回インポート後は、次のコマンドでも実行できます（`godot` はGodot実行ファイルのパスに読み替え）。
+
+```sh
+godot --headless --editor --import --path . --quit
+godot --headless --path . --script res://tests/test_game.gd
+godot --headless --path . --export-release "Web"
+godot --headless --path . --export-release "Windows Desktop"
+python tools/serve.py --open
+```
+
+出力前に `build/web` と `build/windows` ディレクトリを作成してください。`build/.gdignore` を置けばGodotが生成物を再インポートすることを防げます。ビルド出力はエクスポート対象からも除外しています。
+
+## 構成
+
+- `scripts/game.gd`: ゲーム進行、入力、攻撃、各種オブジェクト。
+- `scripts/flight_rules.gd`: 定数、区間、ゲームパッドのデッドゾーン、高速弾の交差判定。
+- `scripts/visuals.gd`: オリジナルの3D図形・マテリアル生成。
+- `scripts/hud.gd`: 開始・HUD・一時停止・結果画面。
+- `tests/test_game.gd`: 24項目の自動テストと4分のステージ全体のシミュレーション。
+- `tools/generate_audio.py`: 効果音の生成元。Python標準ライブラリのみ。
+- `docs/DECISIONS.md`: 採用方針と今後の判断事項。
+- `docs/VALIDATION.md`: 実測した検証結果と未検証事項。
+
+## Steamに向けて
+
+Windows出力は移行経路を確認するための試作ビルドです。Steam連携、ストア登録、実績、セーブ、キー割り当て、画質設定、製品用のアートや音楽、商品としての内容追加はまだ実装していません。
+今回のWeb試作を同じGodotプロジェクトで発展させ、Windows版を継続的に検証する方針です。
+
+## 素材と配布
+
+既存ゲームの機体、キャラクター、画像、音楽、音声、ロゴは使用していません。
+Godotとその依存ソフトウェアの表記は `third_party/` に含めています。実行ファイルを配布する場合はこの表記も同梱してください。
+プロジェクト全体にオープンソースライセンスは設定していません。
