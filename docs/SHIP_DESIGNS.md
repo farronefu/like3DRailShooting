@@ -8,6 +8,7 @@
 game.gd
   player_appearance → resources/ships/player_wolfen.tres
   enemy_appearance  → resources/ships/enemy_scout.tres
+  boss_appearance   → resources/ships/boss_guardian.tres
                             ↓
               scripts/ships/ship_visual.gd
                             ↓
@@ -21,7 +22,7 @@ game.gd
 1. 新しい `.glb`、またはルートが `Node3D` の `.tscn` を `assets/models/` に追加する。
 2. `resources/ships/` の既存 `.tres` を複製し、Godot Inspectorで `Model Scene` に新しいモデルを設定する。
 3. `Model Scale`、`Model Offset`、`Model Rotation Degrees` で大きさ・原点・向きを調整する。
-4. `scenes/main.tscn` のルートノードを選び、`Player Appearance` または `Enemy Appearance` に新しい `.tres` を指定する。
+4. `scenes/main.tscn` のルートノードを選び、`Player Appearance`、`Enemy Appearance`、または `Boss Appearance` に新しい `.tres` を指定する。
 5. F5で開始画面、飛行中、敵の向きとバンクを確認する。
 
 既存モデルをGLBエディターで直接編集した場合は、同じファイルを上書きするだけでGodotが再インポートします。別のデザインを残して切り替えたい場合は、新しいファイル名と `.tres` を使ってください。
@@ -66,3 +67,9 @@ godot --path . --script res://tools/render_ship_preview.gd
 ```
 
 `build/previews/` に前方斜め・後方斜め・真上のPNGを出力します。生成物を変更した後はWebとWindowsの両プリセットを再ビルドしてください。
+
+## River Guardian
+
+ボスの外観は `scenes/ships/river_guardian.tscn` と `scripts/ships/river_guardian_model.gd`。HP・攻撃・命中球は `scripts/river_guardian.gd` で管理し、外観側にはゲーム処理を持たせません。標準ボス外観はプレイヤー側の+Zにコアと砲口を向けた状態です。外観をGLBに置き換える場合も同じ `.tres` の `Model Scene` を交換できます。大きさやコア位置を変える場合は `volumes()` の命中球と、攻撃の砲口オフセットも調整してください。
+
+森林とボスの実描画プレビュー: `godot --path . --script res://tools/render_stage_preview.gd`。`build/previews/forest.png` と `boss.png` を生成します。

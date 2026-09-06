@@ -60,6 +60,24 @@ func run() -> void:
 	trigger.axis_value = 1.0
 	Input.parse_input_event(trigger)
 	check(game.read_input([0]).fire, "controller right trigger reaches the fire adapter")
+	axis = axis.duplicate()
+	axis.axis = JOY_AXIS_RIGHT_X
+	axis.axis_value = -0.8
+	Input.parse_input_event(axis)
+	var combined: Dictionary = game.read_input([0])
+	check(combined.move.x > 0.7 and combined.aim.x < -0.7, "left and right sticks independently move ship and aim in opposite directions")
+	var mouse := InputEventMouseMotion.new()
+	mouse.position = game.get_viewport().get_visible_rect().size * Vector2(0.8,0.3)
+	mouse.relative = Vector2(20,-4)
+	var ship_before: Vector3 = game.player.position
+	game._input(mouse)
+	check(game.aim_screen.is_equal_approx(Vector2(0.8,0.3)) and game.player.position == ship_before, "mouse updates screen reticle without moving the ship")
+	game.step(0.1,{"move":Vector2.RIGHT})
+	check(game.player.position.x > ship_before.x and game.aim_screen.is_equal_approx(Vector2(0.8,0.3)), "keyboard movement preserves mouse aim")
+	game.step(5,{"aim":Vector2(-1,1)})
+	check(game.aim_screen.is_equal_approx(Vector2(0.04,0.92)), "right stick reticle stays within visible bounds")
+	game.start_run()
+
 	check(game.read_input([]).move == Vector2.ZERO and not game.read_input([]).fire, "no enumerated controller leaves no stuck movement or fire")
 	for i in range(120):
 		game.step(1.0 / 60, {"move": Vector2.ONE.normalized()})
@@ -83,6 +101,7 @@ func run() -> void:
 	game.enemies[0].node.position = Vector3(0, 0, -10)
 	game.enemies[0].health = 1
 	game.enemies[1].node.position = Vector3(9, 5, -100)
+	game.aim_screen = game.camera.unproject_position(game.enemies[0].node.position) / game.get_viewport().get_visible_rect().size
 	game.fire_player()
 	game.update_projectiles(0.15)
 	check(game.kills == 1 and game.score == 100 and game.shots_hit == 1, "a real projectile destroys a target and scores once")
@@ -102,25 +121,94 @@ func run() -> void:
 	game.invulnerable = 0
 	game.update_obstacles(0)
 	check(game.health == 65 and game.obstacles.is_empty(), "obstacle contact damages player and removes obstacle")
+
+	# The old fixed-Z shot misses a target centered on its reticle at a different depth.
 	game.start_run()
+	var viewport_size: Vector2 = game.get_viewport().get_visible_rect().size
+	var off_axis_enemy := Vector3(11,0,-120)
+	var pixel: Vector2 = game.camera.unproject_position(off_axis_enemy)
+	var ray: Vector3 = game.camera.project_ray_normal(pixel)
+	var ray_origin: Vector3 = game.camera.project_ray_origin(pixel)
+	var old_plane: Vector3 = ray_origin + ray * ((-60-ray_origin.z)/ray.z)
+	var old_muzzle := Vector3(old_plane.x,old_plane.y,6)
+	check(not Rules.segment_hits(old_muzzle,old_muzzle+Vector3(0,0,-200),off_axis_enemy,2.3), "reproduces old right-lane miss caused by reticle depth parallax")
+	for side in [-1.0,1.0]:
+		for depth in [-25.0,-60.0,-120.0]:
+			game.start_run()
+			game.player.position.x = -side*8 # Also test shooting across the lane.
+			game.spawn_wave(0)
+			game.enemies[0].node.position = Vector3(side*11,2,depth)
+			game.enemies[0].health = 1
+			game.enemies[1].node.position = Vector3(40,30,-200)
+			game.aim_screen = game.camera.unproject_position(game.enemies[0].node.position)/viewport_size
+			game.fire_player()
+			for frame in range(90):
+				game.update_projectiles(1.0/60)
+			check(game.kills == 1 and game.shots_hit == 1, "screen-centered target hit: lane=%d depth=%d" % [int(side),int(depth)])
+	game.start_run()
+	game.spawn_wave(0)
+	game.enemies[0].node.position = Vector3(0,0,-60)
+	game.enemies[0].health = 1
+	game.enemies[1].node.position = Vector3(40,30,-200)
+	game.spawn_obstacle(0)
+	game.obstacles[0].node.position = Vector3(0,0,-25)
+	game.obstacles[0].radius = 4
+	game.spawn_projectile(Vector3.ZERO,Vector3(0,0,-230),false)
+	game.update_projectiles(0.5)
+	check(game.kills == 0 and game.projectiles.is_empty(), "foreground rock blocks an enemy even in a long physics step")
+	check(Rules.segment_entry(Vector3.ZERO,Vector3(0,0,-100),Vector3(0,0,-30),12) < Rules.segment_entry(Vector3.ZERO,Vector3(0,0,-100),Vector3(0,0,-25),1), "surface intersection correctly orders large nearer surfaces despite farther centers")
+	check(Rules.segment_entry(Vector3.ZERO,Vector3.ZERO,Vector3.ZERO,1) == 0 and Rules.segment_entry(Vector3.ZERO,Vector3.ZERO,Vector3(3,0,0),1) == INF, "stationary segments handle overlap and separation")
+	game.start_run()
+	game.elapsed = Rules.BOSS_ARRIVAL-0.01
+	game.step(0.02,{})
+	check(is_instance_valid(game.boss) and game.state == "playing" and game.enemies.is_empty(), "forest end spawns boss and clears approach hazards without clearing mission")
+	check(game.boss.get_child(0).appearance == game.boss_appearance, "boss uses an independently replaceable ship appearance")
+	check(not game.boss.active and game.boss.volumes().is_empty(), "boss entrance has no invisible damageable hit volumes")
+	game.boss.update(game,5)
+	check(game.boss.active and game.boss.attack_count > 0 and game.projectiles.size() > 0, "boss reaches combat position and launches hostile volleys")
+	game.hit_boss(211)
+	game.boss.update(game,0)
+	check(game.boss.phase == 2 and game.boss.health == 209, "boss switches to enraged attack phase below half health")
+	game.elapsed = 360
+	game.invulnerable = 1000
+	game.step(0.01,{})
+	check(game.state == "playing" and not game.boss_defeated, "elapsed time alone never clears an undefeated boss")
+	var boss_age: float = game.boss.age
+	game.toggle_pause()
+	game.step(1,{"fire":true,"aim":Vector2.ONE})
+	check(game.boss.age == boss_age, "pause freezes boss behavior")
+	game.start_run()
+	game.hit_boss(1000)
+	check(game.boss_defeated and game.victory_timer > 0 and game.state == "playing", "boss defeat starts a short victory explosion")
+	var reward: int = game.score
+	game.hit_boss(1000)
+	game.step(2,{})
+	check(game.state == "clear" and game.score == reward, "boss defeat clears mission and rewards exactly once")
+	game.start_run()
+	check(not is_instance_valid(game.boss) and not game.boss_defeated and game.victory_timer < 0 and game.aim_screen == Vector2(0.5,0.5), "retry resets boss lifecycle and reticle")
 	var max_actors := 0
 	var observed_phases: Dictionary = {}
-	for frame in range(14401):
-		game.invulnerable = 1000 # Test the entire schedule independently of pilot skill.
-		var target := Vector2.ZERO
-		if not game.enemies.is_empty():
-			var p: Vector3 = game.enemies[0].node.position
-			target = Vector2(p.x - game.player.position.x, p.y - game.player.position.y).limit_length()
-		game.step(1.0 / 60, {"move": target, "fire": true})
+	var observed_boss := false
+	for frame in range(18000):
+		game.invulnerable = 1000 # Test schedule independently of pilot skill.
+		if is_instance_valid(game.boss):
+			observed_boss = true
+			game.aim_screen = game.camera.unproject_position(game.boss.position+Vector3(0,-0.2,7.7))/viewport_size
+		elif not game.enemies.is_empty():
+			game.aim_screen = game.camera.unproject_position(game.enemies[0].node.position)/viewport_size
+		game.step(1.0/60,{"fire":true})
 		observed_phases[Rules.phase(game.elapsed)] = true
-		max_actors = maxi(max_actors, game.enemies.size() + game.projectiles.size() + game.obstacles.size() + game.particles.size())
-		if frame % 60 == 0:
+		max_actors = maxi(max_actors,game.enemies.size()+game.projectiles.size()+game.obstacles.size()+game.particles.size())
+		if frame%60 == 0:
 			await process_frame
-	check(game.state == "clear" and is_equal_approx(game.elapsed, 240), "full 4-minute schedule reaches mission clear")
-	check(observed_phases.size() == 4, "all four mission sectors execute")
-	check(game.kills > 20, "autopilot can track and destroy targets through a full mission")
-	check(max_actors < 250, "active actor counts remain bounded during full mission")
-	print("SIMULATION: kills=%d score=%d max_actors=%d accuracy=%d%%" % [game.kills, game.score, max_actors, game.accuracy()])
+		if game.state == "clear":
+			break
+	check(game.state == "clear" and game.boss_defeated and game.elapsed > 180 and game.elapsed < 300, "full forest-to-boss simulation wins in the intended 3–5 minute range")
+	check(observed_phases.size() == 4 and observed_boss, "three forest sectors and final boss encounter execute")
+	check(game.kills > 20, "screen-aim autopilot destroys enemies throughout the mission")
+	check(max_actors < 250, "active actor counts remain bounded through the boss battle")
+	check(game.scenery.chunks.size() == 12, "forest recycling keeps a fixed chunk count")
+	print("SIMULATION: time=%.2f kills=%d score=%d max_actors=%d accuracy=%d%%" % [game.elapsed,game.kills,game.score,max_actors,game.accuracy()])
 	game.start_run()
 	check(game.state == "playing" and game.elapsed == 0 and game.shots_fired == 0, "mission clear can restart cleanly")
 	game.return_to_menu()

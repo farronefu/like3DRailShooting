@@ -1,6 +1,6 @@
 extends RefCounted
 ## Pure gameplay rules shared by native and browser builds.
-const DURATION := 240.0
+const BOSS_ARRIVAL := 180.0
 const MAX_HEALTH := 100.0
 const PLAYER_SPEED := 18.0
 const LIMIT_X := 13.0
@@ -15,18 +15,32 @@ static func stick(raw: Vector2) -> Vector2:
 	return raw.normalized() * minf(1.0, (length - DEADZONE) / (1.0 - DEADZONE))
 
 static func segment_hits(a: Vector3, b: Vector3, center: Vector3, radius: float) -> bool:
-	var ab := b - a
-	var t := clampf((center - a).dot(ab) / maxf(ab.length_squared(), 0.000001), 0.0, 1.0)
-	return (a + ab * t).distance_squared_to(center) <= radius * radius
+	return segment_entry(a,b,center,radius) < INF
+
+static func segment_entry(a: Vector3, b: Vector3, center: Vector3, radius: float) -> float:
+	var offset := a - center
+	var c := offset.length_squared() - radius * radius
+	if c <= 0:
+		return 0.0
+	var travel := b - a
+	var length_squared := travel.length_squared()
+	if length_squared < 0.000001:
+		return INF
+	var projection := offset.dot(travel)
+	var discriminant := projection * projection - length_squared * c
+	if discriminant < 0:
+		return INF
+	var t := (-projection - sqrt(discriminant)) / length_squared
+	return t if t >= 0 and t <= 1 else INF
 
 static func phase(time: float) -> int:
 	if time < 60.0:
 		return 0
-	if time < 125.0:
+	if time < 120.0:
 		return 1
-	if time < 190.0:
+	if time < BOSS_ARRIVAL:
 		return 2
 	return 3
 
 static func phase_name(time: float) -> String:
-	return ["OUTER APPROACH", "DEBRIS FIELD", "DEFENSE GRID", "FINAL RUN"][phase(time)]
+	return ["FOREST APPROACH", "RIVER VALLEY", "GUARDIAN TERRITORY", "RIVER GUARDIAN"][phase(time)]

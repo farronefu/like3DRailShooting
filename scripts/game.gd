@@ -3,9 +3,16 @@ extends Node3D
 const rules = preload("res://scripts/flight_rules.gd")
 const visual = preload("res://scripts/visuals.gd")
 const HUD = preload("res://scripts/hud.gd")
+const ForestStage = preload("res://scripts/stages/forest_stage.gd")
+const Guardian = preload("res://scripts/river_guardian.gd")
 const ShipVisual = preload("res://scripts/ships/ship_visual.gd")
 @export var player_appearance: Resource = preload("res://resources/ships/player_wolfen.tres")
 @export var enemy_appearance: Resource = preload("res://resources/ships/enemy_scout.tres")
+@export var boss_appearance: Resource = preload("res://resources/ships/boss_guardian.tres")
+var boss: Node3D
+var boss_defeated := false
+var victory_timer := -1.0
+var aim_screen := Vector2(0.5, 0.5)
 var state := "menu"
 var elapsed := 0.0
 var health := 100.0
@@ -27,7 +34,6 @@ var ship_model: Node3D
 var hud: Control
 var actors: Node3D
 var scenery: Node3D
-var chunks: Array[Node3D] = []
 var enemies: Array[Dictionary] = []
 var obstacles: Array[Dictionary] = []
 var projectiles: Array[Dictionary] = []
@@ -39,8 +45,6 @@ var next_wave := 2.0
 var next_obstacle := 10.0
 var next_repair := 35.0
 var last_phase := -1
-var mouse_steering := false
-var mouse_target := Vector2.ZERO
 var menu_time := 0.0
 var audio_players: Dictionary = {}
 var run_count := 0
@@ -69,28 +73,9 @@ func build_world() -> void:
 	actors = Node3D.new()
 	actors.name = "Actors"
 	add_child(actors)
-	scenery = Node3D.new()
+	scenery = ForestStage.new()
 	add_child(scenery)
-	var environment := WorldEnvironment.new()
-	var env := Environment.new()
-	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color("071221")
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color("91b3d0")
-	env.ambient_light_energy = 0.75
-	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	environment.environment = env
-	add_child(environment)
-	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-35, -35, 0)
-	sun.light_color = Color("b0e1ed")
-	sun.light_energy = 1.8
-	add_child(sun)
-	var rim := DirectionalLight3D.new()
-	rim.rotation_degrees = Vector3(20, 140, 0)
-	rim.light_color = Color("fa865c")
-	rim.light_energy = 1.1
-	add_child(rim)
+	get_viewport().msaa_3d = Viewport.MSAA_2X
 	camera = Camera3D.new()
 	add_child(camera)
 	camera.position = Vector3(0, 5, 27)
@@ -101,48 +86,6 @@ func build_world() -> void:
 	add_child(player)
 	player.position = Vector3(0, 0, 8)
 	ship_model = ShipVisual.spawn(player, player_appearance)
-	visual.box(scenery, Vector3(0, -10, -300), Vector3(170, 1, 750), Color("112338"))
-	# Recycled architecture gives clear speed cues without an infinite scene tree.
-	for i in range(24):
-		var chunk := Node3D.new()
-		scenery.add_child(chunk)
-		chunk.position.z = 40.0 - i * 24.0
-		for side in [-1.0, 1.0]:
-			var height := rng.randf_range(10, 31)
-			visual.box(chunk, Vector3(side * 25, height / 2 - 10, 0), Vector3(8, height, 10), Color("1b3349"))
-			visual.box(chunk, Vector3(side * 20.85, -1, 0), Vector3(0.16, 0.16, 8), Color("50a7b5"), true)
-			visual.box(chunk, Vector3(side * 16, -9.35, 0), Vector3(0.15, 0.12, 14), Color("4598ab"), true)
-		visual.box(chunk, Vector3(0, -9.4, 0), Vector3(31, 0.09, 0.15), Color("2c546b"), true)
-		chunks.append(chunk)
-	# Low draw-call star field.
-	var stars := MultiMeshInstance3D.new()
-	var multi := MultiMesh.new()
-	multi.transform_format = MultiMesh.TRANSFORM_3D
-	var star_mesh := SphereMesh.new()
-	star_mesh.radius = 0.35
-	star_mesh.height = 0.7
-	star_mesh.radial_segments = 4
-	star_mesh.rings = 2
-	star_mesh.material = visual.material(Color("769cab"), true)
-	multi.mesh = star_mesh
-	multi.instance_count = 240
-	for i in range(240):
-		multi.set_instance_transform(i, Transform3D(Basis.IDENTITY, Vector3(rng.randf_range(-450, 450), rng.randf_range(35, 300), rng.randf_range(-950, -350))))
-	stars.multimesh = multi
-	scenery.add_child(stars)
-	var planet := visual.sphere(scenery, Vector3(150, 155, -600), 70, Color("346078"))
-	planet.scale = Vector3.ONE
-	var orbital_ring := visual.ring(scenery, 95, Color("52808f"), 0.7)
-	orbital_ring.position = Vector3(150, 155, -600)
-	orbital_ring.rotation = Vector3(1.1, 0.1, -0.3)
-	var station := Node3D.new()
-	scenery.add_child(station)
-	station.position = Vector3(0, 3, -570)
-	visual.ring(station, 52, Color("476879"), 3.0)
-	visual.ring(station, 47, Color("b07d60"), 0.8)
-	for side in [-1.0, 1.0]:
-		visual.box(station, Vector3(side * 95, 0, 0), Vector3(95, 13, 18), Color("274357"))
-		visual.box(station, Vector3(side * 65, 0, 11), Vector3(52, 1, 0.2), Color("df9869"), true)
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
@@ -155,13 +98,10 @@ func _input(event: InputEvent) -> void:
 		elif event.keycode == KEY_M:
 			muted = not muted
 		elif event.keycode in [KEY_W, KEY_A, KEY_S, KEY_D, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT]:
-			mouse_steering = false
 			input_device = "KEYBOARD"
-	if event is InputEventMouseMotion and event.relative.length() > 1 and state == "playing":
-		mouse_steering = true
+	if event is InputEventMouseMotion and event.relative.length() > 0 and state == "playing":
 		input_device = "MOUSE"
-		var vp := get_viewport().get_visible_rect().size
-		mouse_target = Vector2((event.position.x / vp.x - 0.5) * 29.0, (0.5 - event.position.y / vp.y) * 18.0 + 1.5)
+		aim_screen = clamp_aim(event.position / get_viewport().get_visible_rect().size)
 	if event is InputEventJoypadButton and event.pressed:
 		input_device = "GAMEPAD"
 		if event.button_index == JOY_BUTTON_START:
@@ -203,10 +143,14 @@ func start_run() -> void:
 	ship_model.rotation = Vector3.ZERO
 	ship_model.scale = Vector3.ONE
 	ship_model.visible = true
-	mouse_steering = false
+	aim_screen = Vector2(0.5, 0.5)
+	scenery.reset()
 	hud.primary.release_focus()
 
 func clear_actors() -> void:
+	boss = null
+	boss_defeated = false
+	victory_timer = -1.0
 	for child in actors.get_children():
 		child.free()
 	enemies.clear()
@@ -252,39 +196,70 @@ func read_input(pads: Variant = null) -> Dictionary:
 		pads = Input.get_connected_joypads()
 	var direction := Vector2(float(Input.is_physical_key_pressed(KEY_D) or Input.is_physical_key_pressed(KEY_RIGHT)) - float(Input.is_physical_key_pressed(KEY_A) or Input.is_physical_key_pressed(KEY_LEFT)), float(Input.is_physical_key_pressed(KEY_W) or Input.is_physical_key_pressed(KEY_UP)) - float(Input.is_physical_key_pressed(KEY_S) or Input.is_physical_key_pressed(KEY_DOWN)))
 	var fire := Input.is_physical_key_pressed(KEY_SPACE) or Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+	var aim := Vector2.ZERO
 	for pad in pads:
 		var stick := rules.stick(Vector2(Input.get_joy_axis(pad, JOY_AXIS_LEFT_X), -Input.get_joy_axis(pad, JOY_AXIS_LEFT_Y)))
+		var right_stick := rules.stick(Vector2(Input.get_joy_axis(pad, JOY_AXIS_RIGHT_X), Input.get_joy_axis(pad, JOY_AXIS_RIGHT_Y)))
 		var pad_fire := Input.is_joy_button_pressed(pad, JOY_BUTTON_A) or Input.is_joy_button_pressed(pad, JOY_BUTTON_RIGHT_SHOULDER) or Input.get_joy_axis(pad, JOY_AXIS_TRIGGER_RIGHT) > 0.25
-		if stick.length() > 0.01 or pad_fire:
-			mouse_steering = false
-			input_device = "GAMEPAD"
+		if stick.length() > 0.01:
 			direction = stick
+		if right_stick.length() > 0.01:
+			aim = right_stick
+		if stick.length() > 0.01 or right_stick.length() > 0.01 or pad_fire:
+			input_device = "GAMEPAD"
 		fire = fire or pad_fire
-	if direction.length() > 0.01:
-		mouse_steering = false
 	if invert_y:
 		direction.y *= -1
-	return {"move": direction.limit_length(), "fire": fire, "mouse": mouse_steering}
+		aim.y *= -1
+	return {"move": direction.limit_length(), "fire": fire, "aim": aim}
+
+func clamp_aim(value: Vector2) -> Vector2:
+	return value.clamp(Vector2(0.04, 0.08), Vector2(0.96, 0.92))
+
+func aim_pixel() -> Vector2:
+	return aim_screen * get_viewport().get_visible_rect().size
+
+func aim_target() -> Vector3:
+	var pixel := aim_pixel()
+	var origin := camera.project_ray_origin(pixel)
+	var direction := camera.project_ray_normal(pixel)
+	var end := origin + direction * 600.0
+	var nearest := INF
+	# Use the depth of the first object under the reticle. This compensates
+	# camera/muzzle parallax without bending bullets or selecting off-ray enemies.
+	for enemy in enemies:
+		nearest = minf(nearest, rules.segment_entry(origin, end, enemy.node.position, enemy.radius))
+	for obstacle in obstacles:
+		nearest = minf(nearest, rules.segment_entry(origin, end, obstacle.node.position, obstacle.radius))
+	if is_instance_valid(boss):
+		for volume in boss.volumes():
+			nearest = minf(nearest, rules.segment_entry(origin, end, volume.center, volume.radius))
+	if nearest < INF:
+		return origin.lerp(end, nearest) + direction * 0.15
+	return origin + direction * ((-180.0 - origin.z) / direction.z)
 
 func step(dt: float, controls: Dictionary) -> void:
 	if state != "playing":
 		return
-	elapsed = minf(elapsed + dt, rules.DURATION)
+	if victory_timer >= 0:
+		victory_timer -= dt
+		update_particles(dt)
+		if victory_timer <= 0:
+			state = "clear"
+			ship_model.visible = true
+			play_sound("clear")
+		return
+	elapsed += dt
 	invulnerable = maxf(0.0, invulnerable - dt)
 	hit_flash = maxf(0.0, hit_flash - dt * 3)
 	hit_marker = maxf(0.0, hit_marker - dt * 4)
 	banner_time = maxf(0.0, banner_time - dt)
 	shoot_timer -= dt
 	var old_pos := player.position
-	if controls.get("mouse", false):
-		var target := mouse_target
-		if invert_y:
-			target.y = 3.0 - target.y
-		player.position.x = move_toward(player.position.x, target.x, rules.PLAYER_SPEED * dt * 1.3)
-		player.position.y = move_toward(player.position.y, target.y, rules.PLAYER_SPEED * dt * 1.3)
-	else:
-		var direction: Vector2 = controls.get("move", Vector2.ZERO)
-		player.position += Vector3(direction.x, direction.y, 0) * rules.PLAYER_SPEED * dt
+	var direction: Vector2 = controls.get("move", Vector2.ZERO)
+	player.position += Vector3(direction.x, direction.y, 0) * rules.PLAYER_SPEED * dt
+	var aim_delta: Vector2 = controls.get("aim", Vector2.ZERO)
+	aim_screen = clamp_aim(aim_screen + aim_delta * dt * 0.55)
 	player.position.x = clampf(player.position.x, -rules.LIMIT_X, rules.LIMIT_X)
 	player.position.y = clampf(player.position.y, rules.MIN_Y, rules.MAX_Y)
 	var movement := (player.position - old_pos) / maxf(dt, 0.0001)
@@ -297,37 +272,64 @@ func step(dt: float, controls: Dictionary) -> void:
 	move_scenery(dt)
 	update_schedule()
 	update_enemies(dt)
+	if is_instance_valid(boss):
+		boss.update(self, dt)
 	update_obstacles(dt)
 	update_projectiles(dt)
 	update_repairs(dt)
 	update_particles(dt)
-	if state == "playing" and elapsed >= rules.DURATION:
-		state = "clear"
-		score += int(health) * 20 + 2000
-		ship_model.visible = true
-		play_sound("clear")
 
 func move_scenery(dt: float) -> void:
-	for chunk in chunks:
-		chunk.position.z += dt * 38
-		if chunk.position.z > 55:
-			chunk.position.z -= 576
+	scenery.advance(dt, 10.0 if is_instance_valid(boss) else 38.0)
 
 func update_schedule() -> void:
+	if elapsed >= rules.BOSS_ARRIVAL:
+		if not is_instance_valid(boss) and not boss_defeated:
+			spawn_boss()
+		return
 	var phase := rules.phase(elapsed)
 	if phase != last_phase:
 		last_phase = phase
-		banner = ["01 / OUTER APPROACH — WEAPONS ONLINE", "02 / DEBRIS FIELD — WATCH YOUR FLIGHT PATH", "03 / DEFENSE GRID — INCOMING CROSS FIRE", "04 / FINAL RUN — HOLD THE LINE"][phase]
+		banner = ["01 / FOREST APPROACH", "02 / RIVER VALLEY", "03 / GUARDIAN TERRITORY", "04 / RIVER GUARDIAN"][phase]
 		banner_time = 4.5
-	if elapsed >= next_wave and elapsed < 231:
+	if elapsed >= next_wave and elapsed < rules.BOSS_ARRIVAL - 10:
 		spawn_wave(phase)
 		next_wave += [6.0, 5.5, 4.5, 3.8][phase]
-	if elapsed >= next_obstacle and elapsed < 231:
+	if elapsed >= next_obstacle and elapsed < rules.BOSS_ARRIVAL - 10:
 		spawn_obstacle(phase)
-		next_obstacle += [9.0, 4.0, 6.0, 4.5][phase]
-	if elapsed >= next_repair and elapsed < 226:
+		next_obstacle += [11.0, 8.0, 7.0, 6.0][phase]
+	if elapsed >= next_repair and elapsed < rules.BOSS_ARRIVAL - 10:
 		spawn_repair()
 		next_repair += 35.0
+
+func spawn_boss() -> void:
+	# A clean encounter boundary removes leftover approach hazards.
+	clear_actors()
+	boss = Guardian.new()
+	actors.add_child(boss)
+	ShipVisual.spawn(boss, boss_appearance)
+	boss.position = Vector3(0, 3, -190)
+	last_phase = 3
+	banner = "RIVER GUARDIAN / DESTROY THE AMBER CORE"
+	banner_time = 5
+
+func hit_boss(amount: float) -> void:
+	if not is_instance_valid(boss) or not boss.active or boss_defeated:
+		return
+	boss.health = maxf(0, boss.health - amount)
+	if boss.health <= 0:
+		boss_defeated = true
+		burst(boss.position, Color("ffbb6e"), 60)
+		boss.queue_free()
+		boss = null
+		kills += 1
+		score += 5000 + int(health) * 20
+		victory_timer = 1.5
+		banner = "GUARDIAN DESTROYED / RIVER SECURED"
+		banner_time = 3
+		invulnerable = 10
+		ship_model.visible = true
+		play_sound("damage")
 
 func spawn_wave(phase: int) -> void:
 	var center_x := rng.randf_range(-7, 7)
@@ -366,11 +368,10 @@ func update_enemies(dt: float) -> void:
 func spawn_obstacle(phase: int) -> void:
 	var n := Node3D.new()
 	actors.add_child(n)
-	n.position = Vector3(rng.randf_range(-11, 11), rng.randf_range(-4, 5.5), -175)
+	n.position = Vector3(rng.randf_range(-11, 11), -6.0, -175)
 	var radius := rng.randf_range(1.8, 3.1) if phase != 1 else rng.randf_range(2.3, 3.5)
-	var mesh := visual.sphere(n, Vector3.ZERO, radius, Color("745958"))
+	var mesh := visual.sphere(n, Vector3.ZERO, radius, Color("717967"))
 	mesh.rotation = Vector3(rng.randf(), rng.randf(), rng.randf())
-	visual.ring(n, radius * 1.08, Color("f6a15f"), 0.10)
 	obstacles.append({"node": n, "radius": radius})
 
 func update_obstacles(dt: float) -> void:
@@ -378,7 +379,6 @@ func update_obstacles(dt: float) -> void:
 		var item := obstacles[i]
 		var n: Node3D = item.node
 		n.position.z += 38 * dt
-		n.get_child(0).rotate_y(dt * 0.2)
 		if n.position.distance_to(player.position) < item.radius + 0.9:
 			damage(25)
 			burst(n.position, Color("ee965a"), 10)
@@ -391,7 +391,7 @@ func update_obstacles(dt: float) -> void:
 func fire_player() -> void:
 	shots_fired += 1
 	var origin := player.position + Vector3(0, 0, -2)
-	spawn_projectile(origin, Vector3(0, 0, -185), false)
+	spawn_projectile(origin, (aim_target() - origin).normalized() * 230.0, false)
 	play_sound("laser")
 
 func fire_enemy(origin: Vector3, phase: int) -> void:
@@ -402,6 +402,8 @@ func spawn_projectile(origin: Vector3, velocity: Vector3, hostile: bool) -> void
 	var n := Node3D.new()
 	actors.add_child(n)
 	n.position = origin
+	if velocity.length_squared() > 0.01:
+		n.look_at(origin + velocity)
 	if hostile:
 		visual.sphere(n, Vector3.ZERO, 0.43, Color("ff8255"), true)
 	else:
@@ -422,24 +424,36 @@ func update_projectiles(dt: float) -> void:
 				damage(10)
 				consumed = true
 		else:
-			# Check the nearest intersected object, so rocks shield enemies behind them.
+			# Compare first surface intersections, not distances to object centers.
 			var nearest := INF
 			var enemy_index := -1
+			var boss_damage := 0.0
 			for j in range(enemies.size()):
 				var enemy := enemies[j]
-				var center: Vector3 = enemy.node.position
-				if rules.segment_hits(before, n.position, center, enemy.radius):
-					var distance := before.distance_squared_to(center)
-					if distance < nearest:
-						nearest = distance
-						enemy_index = j
+				var entry := rules.segment_entry(before, n.position, enemy.node.position, enemy.radius)
+				if entry < nearest:
+					nearest = entry
+					enemy_index = j
+			if is_instance_valid(boss):
+				for volume in boss.volumes():
+					var entry := rules.segment_entry(before, n.position, volume.center, volume.radius)
+					if entry < nearest:
+						nearest = entry
+						enemy_index = -1
+						boss_damage = volume.damage
 			for obstacle in obstacles:
-				var center: Vector3 = obstacle.node.position
-				if rules.segment_hits(before, n.position, center, obstacle.radius) and before.distance_squared_to(center) < nearest:
-					nearest = before.distance_squared_to(center)
+				var entry := rules.segment_entry(before, n.position, obstacle.node.position, obstacle.radius)
+				if entry <= nearest:
+					nearest = entry
 					enemy_index = -1
+					boss_damage = 0
 			if nearest < INF:
 				consumed = true
+				if boss_damage > 0:
+					shots_hit += 1
+					hit_marker = 1
+					play_sound("hit")
+					hit_boss(boss_damage)
 				if enemy_index >= 0:
 					var target := enemies[enemy_index]
 					target.health -= 1
@@ -497,7 +511,7 @@ func damage(amount: float) -> void:
 func burst(at: Vector3, color: Color, count: int) -> void:
 	for i in range(count):
 		var n := visual.box(actors, at, Vector3.ONE * rng.randf_range(0.15, 0.4), color, true)
-		particles.append({"node": n, "velocity": Vector3(rng.randf_range(-7, 7), rng.randf_range(-7, 7), rng.randf_range(-5, 8)), "life": rng.randf_range(0.25, 0.65)})
+		particles.append({"node": n, "velocity": Vector3(rng.randf_range(-7, 7), rng.randf_range(-7, 7), rng.randf_range(-5, 8)), "life": rng.randf_range(0.7, 1.5) if count >= 60 else rng.randf_range(0.25, 0.65)})
 
 func update_particles(dt: float) -> void:
 	for i in range(particles.size()-1, -1, -1):
